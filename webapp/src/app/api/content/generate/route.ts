@@ -1,9 +1,10 @@
-import { getDb } from "@/lib/db";
+import { getDb, initializeDb } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Keyword, Produkt } from "@/lib/types";
 
 export async function POST(req: NextRequest) {
+  await initializeDb();
   const body = await req.json();
   const { produktId, anweisungen } = body;
 
@@ -17,29 +18,32 @@ export async function POST(req: NextRequest) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
-      { error: "ANTHROPIC_API_KEY ist nicht konfiguriert. Bitte in .env.local setzen." },
+      { error: "ANTHROPIC_API_KEY ist nicht konfiguriert. Bitte in den Vercel Environment Variables setzen." },
       { status: 500 }
     );
   }
 
   const db = getDb();
-  const produkt = db
-    .prepare("SELECT * FROM produkte WHERE id = ?")
-    .get(produktId) as Produkt | undefined;
+  const produktResult = await db.execute({
+    sql: "SELECT * FROM produkte WHERE id = ?",
+    args: [produktId],
+  });
 
-  if (!produkt) {
+  if (produktResult.rows.length === 0) {
     return NextResponse.json(
       { error: "Produkt nicht gefunden" },
       { status: 404 }
     );
   }
 
-  const keywords = db
-    .prepare(
-      "SELECT * FROM keywords WHERE produkt_id = ? AND ist_relevant = 1 ORDER BY ist_hauptkeyword DESC, suchvolumen DESC"
-    )
-    .all(produktId) as Keyword[];
+  const produkt = produktResult.rows[0] as unknown as Produkt;
 
+  const keywordsResult = await db.execute({
+    sql: "SELECT * FROM keywords WHERE produkt_id = ? AND ist_relevant = 1 ORDER BY ist_hauptkeyword DESC, suchvolumen DESC",
+    args: [produktId],
+  });
+
+  const keywords = keywordsResult.rows as unknown as Keyword[];
   const hauptkeywords = keywords.filter((k) => k.ist_hauptkeyword);
   const weitereKeywords = keywords.filter((k) => !k.ist_hauptkeyword);
 
@@ -58,12 +62,7 @@ export async function POST(req: NextRequest) {
     const message = await client.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 4000,
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
+      messages: [{ role: "user", content: prompt }],
     });
 
     const responseText =
@@ -71,17 +70,16 @@ export async function POST(req: NextRequest) {
 
     const parsed = parseContentResponse(responseText);
 
-    // Neue Version speichern
-    const existingCount = db
-      .prepare("SELECT COUNT(*) as count FROM content WHERE produkt_id = ?")
-      .get(produktId) as { count: number };
+    const existingCount = await db.execute({
+      sql: "SELECT COUNT(*) as count FROM content WHERE produkt_id = ?",
+      args: [produktId],
+    });
+    const count = (existingCount.rows[0].count as number) || 0;
 
-    const result = db
-      .prepare(
-        `INSERT INTO content (produkt_id, titel, bullet1, bullet2, bullet3, bullet4, bullet5, beschreibung, backend_keywords, version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
+    const result = await db.execute({
+      sql: `INSERT INTO content (produkt_id, titel, bullet1, bullet2, bullet3, bullet4, bullet5, beschreibung, backend_keywords, version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
         produktId,
         parsed.titel,
         parsed.bullets[0] || null,
@@ -91,26 +89,28 @@ export async function POST(req: NextRequest) {
         parsed.bullets[4] || null,
         parsed.beschreibung,
         parsed.backend_keywords,
-        existingCount.count + 1
-      );
+        count + 1,
+      ],
+    });
 
-    db.prepare(
-      "UPDATE produkte SET status = 'content', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-    ).run(produktId);
+    await db.execute({
+      sql: "UPDATE produkte SET status = 'content', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      args: [produktId],
+    });
 
-    const content = db
-      .prepare("SELECT * FROM content WHERE id = ?")
-      .get(result.lastInsertRowid);
+    const content = await db.execute({
+      sql: "SELECT * FROM content WHERE id = ?",
+      args: [result.lastInsertRowid!],
+    });
 
     return NextResponse.json({
-      content,
+      content: content.rows[0],
       raw: responseText,
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unbekannter Fehler";
+    const msg = error instanceof Error ? error.message : "Unbekannter Fehler";
     return NextResponse.json(
-      { error: `Claude API Fehler: ${message}` },
+      { error: `Claude API Fehler: ${msg}` },
       { status: 500 }
     );
   }

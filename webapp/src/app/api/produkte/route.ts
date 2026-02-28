@@ -1,26 +1,19 @@
-import { getDb } from "@/lib/db";
+import { getDb, initializeDb } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET() {
+  await initializeDb();
   const db = getDb();
-  const produkte = db
-    .prepare("SELECT * FROM produkte ORDER BY created_at DESC")
-    .all();
-  return NextResponse.json(produkte);
+  const result = await db.execute(
+    "SELECT * FROM produkte ORDER BY created_at DESC"
+  );
+  return NextResponse.json(result.rows);
 }
 
 export async function POST(req: NextRequest) {
+  await initializeDb();
   const body = await req.json();
-  const {
-    name,
-    brand,
-    asin,
-    marketplace,
-    kategorie,
-    preis,
-    produktinfo,
-    voice_tone,
-  } = body;
+  const { name, brand, asin, marketplace, kategorie, preis, produktinfo, voice_tone } = body;
 
   if (!name || !brand) {
     return NextResponse.json(
@@ -30,12 +23,10 @@ export async function POST(req: NextRequest) {
   }
 
   const db = getDb();
-  const result = db
-    .prepare(
-      `INSERT INTO produkte (name, brand, asin, marketplace, kategorie, preis, produktinfo, voice_tone)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
+  const result = await db.execute({
+    sql: `INSERT INTO produkte (name, brand, asin, marketplace, kategorie, preis, produktinfo, voice_tone)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
       name,
       brand,
       asin || null,
@@ -43,11 +34,14 @@ export async function POST(req: NextRequest) {
       kategorie || null,
       preis || null,
       produktinfo || null,
-      voice_tone || null
-    );
+      voice_tone || null,
+    ],
+  });
 
-  const produkt = db
-    .prepare("SELECT * FROM produkte WHERE id = ?")
-    .get(result.lastInsertRowid);
-  return NextResponse.json(produkt, { status: 201 });
+  const produkt = await db.execute({
+    sql: "SELECT * FROM produkte WHERE id = ?",
+    args: [result.lastInsertRowid!],
+  });
+
+  return NextResponse.json(produkt.rows[0], { status: 201 });
 }
