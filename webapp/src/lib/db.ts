@@ -1,22 +1,27 @@
-import Database from "better-sqlite3";
-import path from "path";
+import { createClient, type Client } from "@libsql/client";
 
-const DB_PATH = path.join(process.cwd(), "seo-tool.db");
+let client: Client | null = null;
 
-let db: Database.Database | null = null;
-
-export function getDb(): Database.Database {
-  if (!db) {
-    db = new Database(DB_PATH);
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    initializeDb(db);
+export function getDb(): Client {
+  if (!client) {
+    if (process.env.TURSO_DATABASE_URL) {
+      client = createClient({
+        url: process.env.TURSO_DATABASE_URL,
+        authToken: process.env.TURSO_AUTH_TOKEN,
+      });
+    } else {
+      client = createClient({
+        url: "file:seo-tool.db",
+      });
+    }
   }
-  return db;
+  return client;
 }
 
-function initializeDb(db: Database.Database) {
-  db.exec(`
+export async function initializeDb() {
+  const db = getDb();
+
+  await db.execute(`
     CREATE TABLE IF NOT EXISTS produkte (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -30,8 +35,10 @@ function initializeDb(db: Database.Database) {
       status TEXT DEFAULT 'neu',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
+    )
+  `);
 
+  await db.execute(`
     CREATE TABLE IF NOT EXISTS keywords (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       produkt_id INTEGER NOT NULL,
@@ -41,8 +48,10 @@ function initializeDb(db: Database.Database) {
       ist_relevant INTEGER DEFAULT 1,
       quelle TEXT DEFAULT 'manuell',
       FOREIGN KEY (produkt_id) REFERENCES produkte(id) ON DELETE CASCADE
-    );
+    )
+  `);
 
+  await db.execute(`
     CREATE TABLE IF NOT EXISTS content (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       produkt_id INTEGER NOT NULL,
@@ -57,8 +66,10 @@ function initializeDb(db: Database.Database) {
       version INTEGER DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (produkt_id) REFERENCES produkte(id) ON DELETE CASCADE
-    );
+    )
+  `);
 
+  await db.execute(`
     CREATE TABLE IF NOT EXISTS qa_scores (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       content_id INTEGER NOT NULL,
@@ -69,6 +80,6 @@ function initializeDb(db: Database.Database) {
       notizen TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (content_id) REFERENCES content(id) ON DELETE CASCADE
-    );
+    )
   `);
 }

@@ -1,51 +1,49 @@
-import { getDb } from "@/lib/db";
+import { getDb, initializeDb } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  await initializeDb();
   const { id } = await params;
   const db = getDb();
-  const produkt = db.prepare("SELECT * FROM produkte WHERE id = ?").get(id);
+  const result = await db.execute({
+    sql: "SELECT * FROM produkte WHERE id = ?",
+    args: [id],
+  });
 
-  if (!produkt) {
+  if (result.rows.length === 0) {
     return NextResponse.json(
       { error: "Produkt nicht gefunden" },
       { status: 404 }
     );
   }
 
-  return NextResponse.json(produkt);
+  return NextResponse.json(result.rows[0]);
 }
 
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  await initializeDb();
   const { id } = await params;
   const body = await req.json();
   const db = getDb();
 
-  const fields = [];
-  const values = [];
+  const allowedFields = [
+    "name", "brand", "asin", "marketplace", "kategorie",
+    "preis", "produktinfo", "voice_tone", "status",
+  ];
+
+  const fields: string[] = [];
+  const values: (string | null)[] = [];
 
   for (const [key, value] of Object.entries(body)) {
-    if (
-      [
-        "name",
-        "brand",
-        "asin",
-        "marketplace",
-        "kategorie",
-        "preis",
-        "produktinfo",
-        "voice_tone",
-        "status",
-      ].includes(key)
-    ) {
+    if (allowedFields.includes(key)) {
       fields.push(`${key} = ?`);
-      values.push(value);
+      values.push(value as string);
     }
   }
 
@@ -59,20 +57,25 @@ export async function PUT(
   fields.push("updated_at = CURRENT_TIMESTAMP");
   values.push(id);
 
-  db.prepare(`UPDATE produkte SET ${fields.join(", ")} WHERE id = ?`).run(
-    ...values
-  );
+  await db.execute({
+    sql: `UPDATE produkte SET ${fields.join(", ")} WHERE id = ?`,
+    args: values,
+  });
 
-  const produkt = db.prepare("SELECT * FROM produkte WHERE id = ?").get(id);
-  return NextResponse.json(produkt);
+  const result = await db.execute({
+    sql: "SELECT * FROM produkte WHERE id = ?",
+    args: [id],
+  });
+  return NextResponse.json(result.rows[0]);
 }
 
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  await initializeDb();
   const { id } = await params;
   const db = getDb();
-  db.prepare("DELETE FROM produkte WHERE id = ?").run(id);
+  await db.execute({ sql: "DELETE FROM produkte WHERE id = ?", args: [id] });
   return NextResponse.json({ success: true });
 }
