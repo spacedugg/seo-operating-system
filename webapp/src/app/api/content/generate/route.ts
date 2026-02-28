@@ -15,10 +15,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
     return NextResponse.json(
       { error: "ANTHROPIC_API_KEY ist nicht konfiguriert. Bitte in den Vercel Environment Variables setzen." },
+      { status: 500 }
+    );
+  }
+
+  if (!apiKey.startsWith("sk-ant-")) {
+    return NextResponse.json(
+      { error: "ANTHROPIC_API_KEY hat ein ungültiges Format. Der Key muss mit 'sk-ant-' beginnen." },
       { status: 500 }
     );
   }
@@ -107,10 +114,46 @@ export async function POST(req: NextRequest) {
       content: content.rows[0],
       raw: responseText,
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    if (error instanceof Anthropic.APIError) {
+      const statusCode = error.status;
+      const errorBody = error.message;
+
+      // Spezifischer Hinweis bei Billing-Fehler
+      if (statusCode === 400 && errorBody.includes("credit balance")) {
+        return NextResponse.json(
+          {
+            error: "Der hinterlegte API-Key hat kein ausreichendes Guthaben. Bitte prüfe unter console.anthropic.com > Plans & Billing, ob der Key zum richtigen Workspace gehört.",
+            details: `HTTP ${statusCode}: ${errorBody}`,
+            hinweis: "Tipp: In Vercel unter Settings > Environment Variables prüfen, ob der ANTHROPIC_API_KEY aktuell ist.",
+          },
+          { status: 402 }
+        );
+      }
+
+      // Auth-Fehler
+      if (statusCode === 401) {
+        return NextResponse.json(
+          {
+            error: "API-Key ungültig oder abgelaufen. Bitte neuen Key unter console.anthropic.com erstellen und in Vercel aktualisieren.",
+            details: `HTTP ${statusCode}: ${errorBody}`,
+          },
+          { status: 401 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          error: `Claude API Fehler (HTTP ${statusCode})`,
+          details: errorBody,
+        },
+        { status: statusCode || 500 }
+      );
+    }
+
     const msg = error instanceof Error ? error.message : "Unbekannter Fehler";
     return NextResponse.json(
-      { error: `Claude API Fehler: ${msg}` },
+      { error: `Unerwarteter Fehler: ${msg}` },
       { status: 500 }
     );
   }

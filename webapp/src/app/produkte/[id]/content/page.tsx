@@ -60,7 +60,9 @@ export default function ContentGenerator() {
 
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || "Fehler bei der Generierung");
+        const parts = [err.error || "Fehler bei der Generierung"];
+        if (err.hinweis) parts.push(err.hinweis);
+        throw new Error(parts.join("\n\n"));
       }
 
       const data = await res.json();
